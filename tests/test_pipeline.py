@@ -20,6 +20,7 @@ from src.api.main import app
 from src.attack.xlsb_attack import EICAR_PAYLOAD, embed_payload, embedding_rate, extract_payload
 from src.detectors.ensemble import compute_ensemble_verdict
 from src.detectors.fewshot_cnn import OSLCNN, classify
+from src.detectors.layer_analysis import covert_channel_static_analysis, layer_correlation_analysis
 from src.detectors.statistical import (
     autocorrelation_score,
     byte_entropy_score,
@@ -28,7 +29,14 @@ from src.detectors.statistical import (
     weight_distribution_score,
 )
 from src.representation.grayscale_fourpart import extract_byte_planes, resize_for_cnn, to_gf_image
-from src.utils.weight_io import load_flat_weights, load_state_dict_safely, save_flat_weights_as_state_dict
+from src.utils.weight_io import (
+    inspect_serialization_risk,
+    iter_float32_layers,
+    load_flat_weights,
+    load_state_dict_safely,
+    save_flat_weights_as_state_dict,
+    summarize_state_dict,
+)
 
 
 def test_embedding_rate():
@@ -116,6 +124,41 @@ def test_weight_io_roundtrip():
         loaded_flat = load_flat_weights(out_path)
         np.testing.assert_array_equal(loaded_flat, attacked_flat)
 
+
+
+def test_model_intake_metadata_and_serialization_risk():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "model.pt")
+        torch.save({
+            "layer.weight": torch.randn(3, 4, dtype=torch.float32),
+            "layer.bias": torch.randn(3, dtype=torch.float32),
+        }, path)
+
+        state = load_state_dict_safely(path)
+        metadata = summarize_state_dict(path, state)
+        assert metadata["tensor_count"] == 2
+        assert metadata["num_parameters"] == 15
+        assert metadata["dtype_counts"]["torch.float32"] == 2
+        assert metadata["tensors"][0]["shape"] in ([3], [3, 4])
+        assert "file_size_sanity" in metadata
+
+        risk = inspect_serialization_risk(path)
+        assert risk["pickle_based_format"] is True
+        assert risk["safe_loader"] == "torch.load(weights_only=True)"
+
+
+def test_layer_and_covert_channel_analysis():
+    layers = [
+        ("encoder.weight", np.random.randn(2048).astype(np.float32)),
+        ("secret_trigger.weight", np.zeros(2048, dtype=np.float32)),
+    ]
+    layer_score, layer_details = layer_correlation_analysis(layers)
+    covert_score, covert_details = covert_channel_static_analysis(layers)
+
+    assert layer_details["layer_count"] == 2
+    assert layer_score >= 0.0
+    assert covert_score > 0.0
+    assert covert_details["findings"][0]["name_signal"] is True
 
 def test_statistical_calibration_and_scoring():
     benign_samples = [np.random.randn(20000).astype(np.float32) for _ in range(3)]
