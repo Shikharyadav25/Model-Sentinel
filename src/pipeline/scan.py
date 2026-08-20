@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image
 
 from src.detectors.ensemble import compute_ensemble_verdict
+from src.detectors.layer_analysis import covert_channel_static_analysis, layer_correlation_analysis
 from src.detectors.fewshot_cnn import classify, load_fewshot_cnn
 from src.detectors.statistical import (
     autocorrelation_score,
@@ -22,7 +23,7 @@ from src.detectors.statistical import (
     weight_distribution_score,
 )
 from src.representation.grayscale_fourpart import resize_for_cnn, to_gf_image
-from src.utils.weight_io import load_flat_weights
+from src.utils.weight_io import inspect_serialization_risk, iter_float32_layers, load_flat_weights, summarize_state_dict
 
 # Cached models for sub-second repeat scanning
 _CACHED_CNN = None
@@ -81,8 +82,11 @@ def scan_model(
     file_size_mb = round(file_size_bytes / (1024 * 1024), 2)
     filename = os.path.basename(path)
 
-    # 1. Safe weight loading
+    # 1. Safe weight loading and model intake metadata
     t0 = time.time()
+    serialization_risk = inspect_serialization_risk(path)
+    intake_metadata = summarize_state_dict(path)
+    layers = iter_float32_layers(path)
     flat_weights = load_flat_weights(path)
     load_time = round(time.time() - t0, 3)
     num_params = len(flat_weights)
@@ -103,13 +107,21 @@ def scan_model(
     wd_res = weight_distribution_score(flat_weights, calib)
     stat_time = round(time.time() - t0, 3)
 
-    # 4. Few-Shot CNN Inference
+    # 4. Layer-aware and static backdoor/covert-channel heuristics
+    t0 = time.time()
+    layer_res = layer_correlation_analysis(layers)
+    covert_res = covert_channel_static_analysis(layers)
+    layer_time = round(time.time() - t0, 3)
+
+    # 5. Few-Shot CNN Inference
     t0 = time.time()
     cnn_res = classify(cnn_model, cnn_input, cnn_ref, mode=cnn_mode)
     cnn_time = round(time.time() - t0, 3)
 
-    # 5. Ensemble synthesis
-    verdict = compute_ensemble_verdict(ent_res, ac_res, kl_res, wd_res, cnn_res)
+    # 6. Ensemble synthesis
+    verdict = compute_ensemble_verdict(
+        ent_res, ac_res, kl_res, wd_res, cnn_res, layer_res, covert_res, serialization_risk
+    )
 
     total_time = round(time.time() - start_time, 3)
 
@@ -122,10 +134,13 @@ def scan_model(
         "file_size_mb": file_size_mb,
         "num_parameters": num_params,
         "gf_dimensions": list(gf_image.shape),
+        "metadata": intake_metadata,
+        "serialization_risk": serialization_risk,
         "timing": {
             "load_time_sec": load_time,
             "gf_transform_sec": gf_time,
             "statistical_sec": stat_time,
+            "layer_static_sec": layer_time,
             "cnn_sec": cnn_time,
             "total_scan_sec": total_time,
         },
