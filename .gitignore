@@ -1,0 +1,49 @@
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing & Caches
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# IDE & OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Large generated data & model binaries (keep models/ checkpoints and calibration)
+data/
+*.pt
+*.pth
+*.safetensors
+*.bin
+
+# Unignore the lightweight checkpoint & calibration artifacts needed for out-of-the-box running
+!models/
+!models/fewshot_cnn.pt
+!models/calibration.json
+!results/accuracy_vs_er.png
